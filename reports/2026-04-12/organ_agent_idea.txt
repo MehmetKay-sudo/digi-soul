@@ -1,0 +1,207 @@
+================================================================================
+DIGI-SOUL — CODE REVIEW & IDEA REPORT
+Date: 2026-04-12
+Author: Claude (code review session with Mehmet)
+================================================================================
+
+
+PART 1 — CURRENT STATE OF THE ORGANS (Code Review)
+────────────────────────────────────────────────────
+
+All organs inherit from core/organ.py (Organ base class) and communicate
+exclusively through the MessageBus (core/bus.py). Each organ has:
+  - an asyncio inbox queue
+  - a state dict that gets pushed to the UI on every update
+  - a run() loop that reacts to incoming signals
+
+Here is the current behaviour of each organ:
+
+  Heart (organs/heart.py)
+    - Beats at a fixed BPM (default 60), broadcasting a "pulse" signal each beat
+    - Reacts to "command" signals: increase_bpm, decrease_bpm, regulate
+    - BPM is clamped between 40 and 130
+    - Fully reactive — no self-initiated decisions
+
+  Lungs (organs/lungs.py)
+    - Cycles through inhale/exhale on a timer (default 2.0 s per phase)
+    - On every exhale, broadcasts oxygen level: 95 + (cycles % 6)
+    - NOTE: This formula produces O2 = 95 on every 6th cycle, which is below
+      the brain's OXYGEN_LOW threshold of 96. This triggers a false alert
+      every 6 breaths. See Part 2 for the full explanation.
+    - Reacts to breathe_faster / breathe_normal commands
+
+  Brain (organs/brain.py)
+    - Central coordinator — listens to all broadcast signals
+    - Hardcoded thresholds: OXYGEN_LOW=96, GLUCOSE_LOW=65, GLUCOSE_HIGH=130
+    - Responds to: pulse, oxygen, glucose, alert, circadian, language_result
+    - Sends commands to heart and lungs when thresholds are breached
+    - Now also handles language_result signals from the language module
+
+  Stomach (organs/stomach.py)
+    - Autonomous digestion loop — no incoming signal dependency
+    - Cycles through: hungry → eating → digesting → absorbing
+    - Sends nutrient signals to liver after each digestion cycle
+    - Fullness refills with a random value between 50-100 when empty
+
+  Liver (organs/liver.py)
+    - Three concurrent tasks: main signal listener, glucose regulation, detox cycle
+    - Receives nutrients from stomach, hormones from pancreas, pulses from heart
+    - Manages glucose level (GLUCOSE_MIN=70, GLUCOSE_MAX=140)
+    - Toxin load increases with every heartbeat pulse (+0.3 per beat)
+    - Detox cycle runs every 6 seconds, reduces toxin load by 8 units
+    - Sends alert to brain if toxin load exceeds 60%
+    - Most sophisticated organ in the current codebase
+
+  Kidney (organs/kidney.py)
+    - Tracks urea level — rises +0.3 per heartbeat, excreted every 10 beats
+    - Monitors fluid balance with random fluctuation (±6 every 7 seconds)
+    - Increases filtration rate under hyperglycemia (glucose > 130)
+    - Manages blood pressure based on fluid balance
+
+  Pancreas (organs/pancreas.py)
+    - Monitors glucose signals
+    - Secretes insulin (via endocrine bus) when glucose > 110
+    - Secretes glucagon when glucose < 70
+    - Signals liver directly to store or release glucose
+    - Works in tandem with the EndocrineBus for hormone decay
+
+  Adrenal Gland (organs/adrenal_gland.py)
+    - Triggers on brain "alert" signals or oxygen below 90%
+    - Releases adrenaline + cortisol via endocrine bus
+    - Cascades to heart (increase BPM) and lungs (breathe faster)
+    - Also sends an alert back to the brain — creating a feedback loop
+      that can amplify under stress conditions
+
+  Immune System (organs/immune_system.py)
+    - Patrols every 8 seconds — naturally recovers threat level and white cells
+    - Responds to liver toxin alerts and explicit "pathogen" signals
+    - Cortisol (from adrenal) suppresses immune response (realistic!)
+    - At high threat (>50%), triggers cytokine release and alerts the brain
+    - Hyperglycemia slowly degrades white cell capacity
+
+  Language Module (language/language_module.py)  [newly added]
+    - Loads and indexes .txt files into an in-memory corpus
+    - Uses Anthropic API (Claude) to generate speech from loaded memory
+    - Receives signals: load, save, query, recall, speak
+    - Returns results to brain via language_result signal
+
+  Language Bridge (language/language_bridge.py)  [newly added]
+    - Syncs rapbot's txt files into digi-soul's language memory at startup
+    - Allows rap verses from battle sessions to be saved back to memory
+    - Fully optional — digi-soul runs without rapbot present
+
+
+PART 2 — KNOWN BUG: Chronic Low O2 Alert
+────────────────────────────────────────────────────
+
+Location: organs/lungs.py, line 31
+
+  Current code:
+    self.state["oxygen_level"] = 95 + (self.state["cycles"] % 6)
+
+  This produces the sequence: 95, 96, 97, 98, 99, 100, 95, 96, ...
+
+  The brain's threshold (organs/brain.py, line 3):
+    OXYGEN_LOW = 96
+
+  Result: every 6th breath, O2 drops to 95 which is below 96, triggering:
+    - brain alert "LOW O2: 95%"
+    - heart commanded to increase_bpm
+    - lungs commanded to breathe_faster
+    - adrenal gland then also fires (oxygen < 90 is its threshold, so
+      adrenal stays quiet, but the brain/heart loop still runs every cycle)
+
+  This is not a physiological event — it is a loop artefact from the modulo
+  formula. The humanoid is not actually hypoxic; it just looks that way on
+  the UI every 6 breaths.
+
+  Proposed fix (one line):
+    self.state["oxygen_level"] = 97 + (self.state["cycles"] % 4)
+    → cycles through: 97, 98, 99, 100, 97, 98 ... — always above threshold
+
+
+PART 3 — IDEA: EVERY ORGAN AS A CLAUDE AGENT
+────────────────────────────────────────────────────
+
+*** KEEP THIS IN MIND FOR FUTURE DEVELOPMENT ***
+
+Currently all organs are reactive state machines. They only act when a signal
+arrives. Their decisions are hardcoded if/elif chains. They cannot reason,
+adapt, or develop new behaviour over time.
+
+The idea is to give each organ its own Claude (Anthropic API) reasoning loop,
+making it a true autonomous agent within the body.
+
+What changes:
+
+  FROM (current):
+    Signal arrives → hardcoded if/elif → fixed response
+
+  TO (agent):
+    Signal arrives → organ describes its state and the signal to Claude →
+    Claude reasons about what to do → Claude calls tools (organ commands) →
+    organ executes those tools on the bus
+
+Each organ's "tools" would be the signals it is allowed to send to other organs.
+For example, the Brain agent's tools:
+    - send_to_heart(cmd)
+    - send_to_lungs(cmd)
+    - send_to_language_module(prompt, style)
+    - broadcast_alert(message)
+
+Each organ gets a system prompt describing its biological role, its current
+vital parameters, and its responsibilities within the body.
+
+Recommended implementation order:
+
+  1. Brain first (highest leverage)
+     The brain already integrates all signals. Replace its if/elif with a
+     Claude tool-use loop. Claude reads all vitals together and decides
+     which organ commands to issue — more like a real brain.
+
+  2. Immune System (most complex decision-making)
+     Threat assessment is nuanced — cortisol level, threat origin, white cell
+     capacity, prior exposure all matter. Claude handles this naturally.
+
+  3. Adrenal Gland (stress response calibration)
+     Currently it fires at full intensity for every alert. An agent version
+     could calibrate the adrenaline/cortisol dose based on threat severity,
+     duration, and the body's current state.
+
+  4. Liver (metabolic strategy)
+     Glucose decisions involve multiple competing signals (insulin, glucagon,
+     nutrients, toxins). Claude could reason about the right metabolic
+     strategy rather than applying fixed formulas.
+
+  5. Remaining organs (heart, lungs, stomach, kidney, pancreas)
+     These are simpler and could have lightweight Claude reasoning — mostly
+     for adaptive response rather than full autonomous decision-making.
+
+Architecture note:
+  The MessageBus stays as-is. The agent layer sits inside each organ's run()
+  loop. Claude is called asynchronously so it does not block other organs.
+  The Anthropic tool_use API is the right interface — each bus signal an
+  organ can emit becomes one tool definition.
+
+  Each organ's system prompt should include:
+    - Its biological role in one paragraph
+    - Its current state (vitals, hormone levels, etc.)
+    - The signals it is allowed to send and their effects
+    - Any inter-organ dependencies to be aware of
+
+Language integration:
+  The language module already uses Claude for speech generation. The same
+  client and model (claude-opus-4-6) can be reused for organ agents,
+  keeping API surface consistent.
+
+Cost consideration:
+  With 10 organs each potentially calling Claude on every signal, API calls
+  could be frequent. Mitigation options:
+    - Only call Claude when the organ's state crosses a threshold
+    - Use haiku model for simple organs, opus for brain
+    - Add a cooldown: each organ can only reason via Claude once per N seconds
+
+
+================================================================================
+END OF REPORT
+================================================================================

@@ -64,4 +64,16 @@ class Brain(Organ):
                 self.state["status"] = "sleeping" if mode == "sleep" else "active"
                 self.state["last_signal"] = f"circadian → {mode}"
 
+            elif signal == "language_result":
+                cmd    = msg.get("cmd", "?")
+                result = msg.get("result", {})
+                if result.get("ok"):
+                    self.state["last_signal"] = f"lang/{cmd} ok"
+                    if cmd == "speak" and result.get("text"):
+                        spoken = result["text"]
+                        self.state["last_signal"] = f"spoke: {spoken[:60]}{'…' if len(spoken) > 60 else ''}"
+                else:
+                    self.state["alert"] = f"[LANG] {result.get('error', 'unknown error')}"
+                    self.state["last_signal"] = f"lang/{cmd} error"
+
             self.bus.update_ui("brain", dict(self.state))

@@ -10,6 +10,8 @@ from hardware.bridge import HardwareBridge
 from hardware.mock_robot import MockRobot
 
 from organs.brain import Brain
+from language.language_module import LanguageModule
+from language.language_bridge  import RapbotBridge
 from organs.heart import Heart
 from organs.kidney import Kidney
 from organs.liver import Liver
@@ -105,8 +107,16 @@ def main():
     pancreas     = Pancreas(bus, endocrine)
     adrenal      = AdrenalGland(bus, endocrine)
     immune       = ImmuneSystem(bus, endocrine)
+    language     = LanguageModule(bus)
 
-    organs = [heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune]
+    # Sync rapbot's language repository into the brain's language memory at startup.
+    # Gracefully skipped if rapbot is not present on this machine.
+    try:
+        RapbotBridge(language).sync()
+    except Exception as exc:
+        print(f"[main] language bridge skipped: {exc}")
+
+    organs = [heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune, language]
     for organ in organs:
         bus.register(organ)
 

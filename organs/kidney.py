@@ -1,3 +1,15 @@
+"""
+Enhanced Kidney
+===============
+Based on: Elmas & Kunduracioglu (2025) §2.4 — Kidney functions include:
+  - Glomerular filtration rate (GFR ~120 mL/min)
+  - RAAS (renin-angiotensin-aldosterone system) for blood pressure
+  - Erythropoietin (EPO) production for red blood cell stimulation
+  - Fluid & electrolyte balance, acid-base homeostasis
+
+Also: Zhang (2020) — space quality affects filtration efficiency.
+"""
+
 import asyncio
 import random
 
@@ -5,25 +17,43 @@ from core.organ import Organ
 
 
 class Kidney(Organ):
-    NORMAL_GFR = 120     # mL/min — glomerular filtration rate
+    NORMAL_GFR = 120     # mL/min (Elmas 2025 §2.4)
     UREA_MAX = 60        # mg/dL
-    UREA_NORMAL = 15     # mg/dL
+    UREA_NORMAL = 18     # mg/dL (typical adult reference)
     EXCRETION_EVERY = 10 # beats between excretion events
+
+    # RAAS thresholds (Elmas 2025 §2.4)
+    BP_LOW_THRESHOLD  = 85   # mmHg systolic — triggers RAAS
+    BP_HIGH_THRESHOLD = 130  # mmHg — suppresses renin
+
+    # Erythropoietin
+    EPO_BASE = 10              # mU/mL baseline
+    EPO_HYPOXIA_THRESHOLD = 95 # blood O2% below this → EPO boost
 
     def __init__(self, bus):
         super().__init__("kidney", bus)
+        self._space_physiology = None   # resolved at runtime
         self.state = {
             "status": "filtering",
             "filtration_rate": self.NORMAL_GFR,  # mL/min
-            "urea_level": 15,                    # mg/dL
+            "urea_level": 18,                    # mg/dL
             "fluid_balance": 100,                # percent
             "blood_pressure": "normal",
+            "bp_systolic": 120,                  # mmHg — simulated
+            "renin_level": 0,                    # RAAS: renin activity (0-100)
+            "erythropoietin": self.EPO_BASE,     # mU/mL
             "last_action": "—",
         }
         self._beats = 0
 
     async def run(self):
+        # Find space physiology organ
+        if "space_physiology" in self.bus._organs:
+            self._space_physiology = self.bus._organs["space_physiology"]
+
         asyncio.create_task(self._fluid_regulation())
+        asyncio.create_task(self._raas_loop())
+
         while True:
             msg = await self.receive()
             signal = msg.get("signal")
@@ -44,7 +74,6 @@ class Kidney(Organ):
             elif signal == "glucose":
                 level = msg.get("level", 90)
                 if level > 130:
-                    # Hyperglycemia — kidneys filter excess glucose
                     self.state["filtration_rate"] = min(160, self.state["filtration_rate"] + 10)
                     self.state["last_action"] = "filtering excess glucose"
                     self.state["status"] = "stressed"
@@ -52,10 +81,32 @@ class Kidney(Organ):
                     self.state["filtration_rate"] = self.NORMAL_GFR
                     self.state["status"] = "filtering"
 
+            elif signal == "oxygen":
+                o2 = msg.get("level", 100)
+                if o2 < self.EPO_HYPOXIA_THRESHOLD:
+                    # Hypoxia → boost EPO production (Elmas 2025 §2.4)
+                    boost = (self.EPO_HYPOXIA_THRESHOLD - o2) * 2
+                    self.state["erythropoietin"] = min(50, self.EPO_BASE + boost)
+                    self.state["last_action"] = f"hypoxia: EPO ↑ to {self.state['erythropoietin']:.0f}"
+                else:
+                    self.state["erythropoietin"] = max(self.EPO_BASE,
+                                                       self.state["erythropoietin"] - 0.5)
+
+            elif signal == "space_status":
+                # Zhang 2020: space narrowing reduces filtration efficiency
+                quality = msg.get("overall", 1.0)
+                if quality < 0.6:
+                    penalty = 1.0 - (0.6 - quality) * 1.5
+                    self.state["filtration_rate"] = int(self.NORMAL_GFR * max(0.3, penalty))
+                    self.state["last_action"] = f"space narrow: GFR ↓ to {self.state['filtration_rate']}"
+                    self.state["status"] = "compressed"
+                else:
+                    self.state["filtration_rate"] = self.NORMAL_GFR
+
             self.bus.update_ui("kidney", dict(self.state))
 
     async def _fluid_regulation(self):
-        """Manages fluid balance and blood pressure."""
+        """Manages fluid balance and blood pressure (Elmas 2025 §2.4)."""
         while True:
             await asyncio.sleep(7)
             self.state["fluid_balance"] += random.randint(-6, 6)
@@ -64,11 +115,38 @@ class Kidney(Organ):
                 self.state["fluid_balance"] -= 10
                 self.state["last_action"] = "excreting excess fluid"
                 self.state["blood_pressure"] = "elevated"
+                self.state["bp_systolic"] = min(150, self.state["bp_systolic"] + 3)
             elif self.state["fluid_balance"] < 90:
                 self.state["fluid_balance"] += 8
                 self.state["last_action"] = "retaining fluid"
                 self.state["blood_pressure"] = "low"
+                self.state["bp_systolic"] = max(80, self.state["bp_systolic"] - 3)
             else:
                 self.state["blood_pressure"] = "normal"
+                # Drift toward 120
+                self.state["bp_systolic"] += (120 - self.state["bp_systolic"]) * 0.1
+
+            self.bus.update_ui("kidney", dict(self.state))
+
+    async def _raas_loop(self):
+        """
+        Renin-Angiotensin-Aldosterone System simulation (Elmas 2025 §2.4).
+        When BP drops → renin released → angiotensin → aldosterone → fluid retention.
+        """
+        while True:
+            await asyncio.sleep(5)
+            bp = self.state["bp_systolic"]
+
+            if bp < self.BP_LOW_THRESHOLD:
+                # Activate RAAS
+                self.state["renin_level"] = min(100, self.state["renin_level"] + 8)
+                self.state["fluid_balance"] = min(115, self.state["fluid_balance"] + 3)
+                self.state["last_action"] = f"RAAS active (renin={self.state['renin_level']:.0f})"
+            elif bp > self.BP_HIGH_THRESHOLD:
+                # Suppress renin
+                self.state["renin_level"] = max(0, self.state["renin_level"] - 6)
+            else:
+                # Normal range — slow decay
+                self.state["renin_level"] = max(0, self.state["renin_level"] - 2)
 
             self.bus.update_ui("kidney", dict(self.state))

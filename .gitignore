@@ -24,5 +24,3 @@ Thumbs.db
 # Project specific
 *.zip
 digi-soul/
-__pycache__/
-*.pyc

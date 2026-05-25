@@ -138,7 +138,7 @@ def main():
     brain        = Brain(bus)
     stomach      = Stomach(bus)
     liver        = Liver(bus)
-    kidney       = Kidney(bus)
+    kidney       = Kidney(bus, endocrine)
     pancreas     = Pancreas(bus, endocrine)
     adrenal      = AdrenalGland(bus, endocrine)
     immune       = ImmuneSystem(bus, endocrine)

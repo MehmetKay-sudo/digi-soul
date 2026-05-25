@@ -27,6 +27,7 @@ class Lungs(Organ):
             "phase": "inhale",
             "cycles": 0,
             "oxygen_level": 100,
+            "co2_level": 40.0,          # mmHg — normal arterial PCO2 35-45
             "alveolar_space_quality": 1.0,
             "tidal_volume_ml": 500,     # mL — typical adult
             "status": "breathing",
@@ -54,9 +55,17 @@ class Lungs(Organ):
             # Exhale
             self.state["phase"] = "exhale"
             self.state["cycles"] += 1
-            self.state["oxygen_level"] = 90 + int(o2_efficiency * 15)
+            self.state["oxygen_level"] = min(100, 90 + int(o2_efficiency * 10))
+
+            # CO2 rises with metabolism, falls with breathing rate and alveolar efficiency
+            metabolic_co2 = 1.5
+            expelled_co2  = (BREATH_NORMAL / self.breath_interval) * 1.5 * o2_efficiency
+            self.state["co2_level"] = round(
+                max(35.0, min(50.0, self.state["co2_level"] + metabolic_co2 - expelled_co2)), 1
+            )
+
             await self.broadcast(signal="oxygen", level=self.state["oxygen_level"],
-                                 space_quality=space_q)
+                                 co2=self.state["co2_level"], space_quality=space_q)
             self.bus.update_ui("lungs", dict(self.state))
             await asyncio.sleep(self.breath_interval)
 

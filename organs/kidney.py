@@ -30,8 +30,9 @@ class Kidney(Organ):
     EPO_BASE = 10              # mU/mL baseline
     EPO_HYPOXIA_THRESHOLD = 95 # blood O2% below this → EPO boost
 
-    def __init__(self, bus):
+    def __init__(self, bus, endocrine=None):
         super().__init__("kidney", bus)
+        self.endocrine = endocrine
         self._space_physiology = None   # resolved at runtime
         self.state = {
             "status": "filtering",
@@ -42,9 +43,12 @@ class Kidney(Organ):
             "bp_systolic": 120,                  # mmHg — simulated
             "renin_level": 0,                    # RAAS: renin activity (0-100)
             "erythropoietin": self.EPO_BASE,     # mU/mL
+            "ph":          7.40,                 # arterial pH — normal 7.35-7.45 (Elmas 2025 §2.4)
+            "bicarbonate": 24,                   # mEq/L — renal buffer (normal 22-26)
             "last_action": "—",
         }
         self._beats = 0
+        self._last_co2 = 40.0
 
     async def run(self):
         # Find space physiology organ
@@ -53,6 +57,7 @@ class Kidney(Organ):
 
         asyncio.create_task(self._fluid_regulation())
         asyncio.create_task(self._raas_loop())
+        asyncio.create_task(self._acid_base_regulation())
 
         while True:
             msg = await self.receive()
@@ -82,7 +87,8 @@ class Kidney(Organ):
                     self.state["status"] = "filtering"
 
             elif signal == "oxygen":
-                o2 = msg.get("level", 100)
+                o2  = msg.get("level", 100)
+                self._last_co2 = msg.get("co2", self._last_co2)
                 if o2 < self.EPO_HYPOXIA_THRESHOLD:
                     # Hypoxia → boost EPO production (Elmas 2025 §2.4)
                     boost = (self.EPO_HYPOXIA_THRESHOLD - o2) * 2
@@ -148,5 +154,47 @@ class Kidney(Organ):
             else:
                 # Normal range — slow decay
                 self.state["renin_level"] = max(0, self.state["renin_level"] - 2)
+
+            self.bus.update_ui("kidney", dict(self.state))
+
+    async def _acid_base_regulation(self):
+        """
+        Acid-base homeostasis (Elmas 2025 §2.4).
+        Simplified Henderson-Hasselbalch: pH shifts with PCO2 from lungs.
+        Kidney compensates by retaining or excreting bicarbonate (HCO3).
+        Also handles ADH-driven water retention when dehydrated.
+        """
+        while True:
+            await asyncio.sleep(4)
+
+            # Respiratory component: rising CO2 lowers pH (respiratory acidosis)
+            co2_deviation = self._last_co2 - 40.0
+            self.state["ph"] = round(
+                max(7.10, min(7.60, 7.40 - co2_deviation * 0.015)), 2
+            )
+
+            # Renal compensation: adjust bicarbonate to buffer pH
+            ph = self.state["ph"]
+            if ph < 7.35:
+                self.state["bicarbonate"] = min(30, self.state["bicarbonate"] + 0.5)
+                self.state["last_action"] = f"retaining HCO₃ (pH {ph})"
+            elif ph > 7.45:
+                self.state["bicarbonate"] = max(18, self.state["bicarbonate"] - 0.5)
+                self.state["last_action"] = f"excreting HCO₃ (pH {ph})"
+
+            if ph < 7.20 or ph > 7.60:
+                await self.send("brain", signal="alert",
+                                source="kidney", msg=f"acid-base crisis pH={ph}")
+
+            # ADH integration: secrete when dehydrated, respond to circulating ADH
+            if self.endocrine:
+                if self.state["fluid_balance"] < 92:
+                    self.endocrine.secrete("adh", amount=15, source="kidney")
+                adh_level = self.endocrine.get_level("adh")
+                if adh_level > 20:
+                    self.state["fluid_balance"] = min(
+                        110, self.state["fluid_balance"] + adh_level * 0.1
+                    )
+                    self.state["last_action"] = f"ADH water retention ({adh_level:.0f}u)"
 
             self.bus.update_ui("kidney", dict(self.state))

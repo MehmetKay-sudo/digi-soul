@@ -12,6 +12,8 @@ HORMONE_HALF_LIVES: dict[str, float] = {
     "glucagon":   25,   # glucose release signal
     "melatonin": 120,   # sleep induction
     "cytokines":  40,   # immune inflammatory signal
+    "adh":        30,   # antidiuretic hormone — water retention (Elmas 2025 §2.4)
+    "t3":         90,   # thyroid triiodothyronine — basal metabolic rate (Elmas 2025 §2.3)
 }
 
 # Maximum circulating level (arbitrary units, 0-100)

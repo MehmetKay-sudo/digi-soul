@@ -13,6 +13,7 @@ Subsystems:
   display      — status text sent to on-board display
 """
 
+import copy
 import time
 
 
@@ -94,4 +95,7 @@ class MockRobot:
         return self._log[-n:]
 
     def get_state(self) -> dict:
-        return dict(self.state)
+        # Deep copy so the Tkinter UI thread reads a fully independent snapshot —
+        # the nested "servos" dict would otherwise be shared with the asyncio
+        # thread that mutates it, causing a cross-thread race condition.
+        return copy.deepcopy(self.state)

@@ -175,7 +175,8 @@ class LanguageModule(Organ):
             elif cmd == "speak":
                 prompt = msg.get("prompt", "Say something.")
                 style  = msg.get("style", "thoughtful")
-                text   = self.speak(prompt, style)
+                loop = asyncio.get_running_loop()
+                text = await loop.run_in_executor(None, lambda: self.speak(prompt, style))
                 self.state["last_action"] = f"spoke ({style})"
                 self.state["last_spoken"] = text[:80] + ("…" if len(text) > 80 else "")
                 return {"ok": True, "text": text}

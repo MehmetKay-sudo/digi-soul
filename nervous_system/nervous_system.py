@@ -85,12 +85,16 @@ class NervousSystem:
 
             if signal == "pulse" and sender == "heart":
                 beats = msg.get("beats", 0)
-                if beats % 5 == 0:
+                # Every 2nd beat keeps the cardiac sensory pathway warm so the
+                # interneuron → motor reflex arc and LTP engage at normal resting rate.
+                if beats % 2 == 0:
                     await self.stimulate("sensory_cardiac", strength=0.6)
 
             elif signal == "oxygen":
                 level = msg.get("level", 100)
-                strength = 1.0 if level < 96 else 0.2
+                # Strong drive when O2 is low; a meaningful baseline otherwise
+                # so the chemo pathway stays warm between hypoxic events.
+                strength = 1.0 if level < 96 else 0.45
                 await self.stimulate("sensory_chemo", strength=strength)
 
             elif signal == "glucose":

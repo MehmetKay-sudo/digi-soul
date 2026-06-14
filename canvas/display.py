@@ -5,15 +5,16 @@ from PIL import Image, ImageTk
 
 # ── Organ positions (x, y) on 460×700 body canvas ────────────────────────────
 ORGAN_CONFIG = {
-    "brain":         {"pos": (230,  68), "color": "#9b59b6", "label": "BRAIN"},
-    "heart":         {"pos": (192, 278), "color": "#e74c3c", "label": "HEART"},
-    "lungs":         {"pos": (268, 258), "color": "#3498db", "label": "LUNGS"},
-    "stomach":       {"pos": (208, 355), "color": "#e67e22", "label": "STOMACH"},
-    "liver":         {"pos": (278, 340), "color": "#c0392b", "label": "LIVER"},
-    "kidney":        {"pos": (278, 398), "color": "#27ae60", "label": "KIDNEY"},
-    "pancreas":      {"pos": (195, 372), "color": "#f39c12", "label": "PANCREAS"},
-    "adrenal_gland": {"pos": (275, 375), "color": "#e74c3c", "label": "ADRENAL"},
-    "immune_system": {"pos": (230, 148), "color": "#1abc9c", "label": "IMMUNE"},
+    "brain":             {"pos": (230,  68), "color": "#9b59b6", "label": "BRAIN"},
+    "heart":             {"pos": (192, 278), "color": "#e74c3c", "label": "HEART"},
+    "lungs":             {"pos": (268, 258), "color": "#3498db", "label": "LUNGS"},
+    "stomach":           {"pos": (208, 355), "color": "#e67e22", "label": "STOMACH"},
+    "liver":             {"pos": (278, 340), "color": "#c0392b", "label": "LIVER"},
+    "kidney":            {"pos": (278, 398), "color": "#27ae60", "label": "KIDNEY"},
+    "pancreas":          {"pos": (195, 372), "color": "#f39c12", "label": "PANCREAS"},
+    "adrenal_gland":     {"pos": (275, 375), "color": "#e74c3c", "label": "ADRENAL"},
+    "immune_system":     {"pos": (230, 148), "color": "#1abc9c", "label": "IMMUNE"},
+    "space_physiology":  {"pos": (230, 500), "color": "#5dade2", "label": "SPACES"},
 }
 
 CANVAS_W, CANVAS_H = 460, 700

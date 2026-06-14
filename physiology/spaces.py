@@ -85,6 +85,7 @@ class SpacePhysiology(Organ):
 
     async def run(self):
         """Quarter-second cycle updating space dynamics."""
+        asyncio.create_task(self._drain_inbox())
         while True:
             await asyncio.sleep(0.25)
             self._cycle += 1
@@ -152,3 +153,8 @@ class SpacePhysiology(Organ):
                 )
 
             self.bus.update_ui("space_physiology", dict(self.state))
+
+    async def _drain_inbox(self):
+        """Discard organ broadcasts — SpacePhysiology drives itself from its own cycle."""
+        while True:
+            await self.inbox.get()

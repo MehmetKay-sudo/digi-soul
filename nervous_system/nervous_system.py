@@ -105,6 +105,13 @@ class NervousSystem:
                     # Excess glucose — mild inhibitory signal to slow cardiac
                     await self.stimulate("sensory_glucose", strength=-0.3)
 
+            elif signal == "space_status":
+                # Zhang 2020: narrowing spaces → drive respiratory compensation
+                overall = msg.get("overall", 1.0)
+                if overall < 0.7:
+                    await self.stimulate("sensory_spaces",
+                                         strength=(0.7 - overall) * 20)
+
             elif signal == "alert":
                 # General threat → activate stress pathway
                 await self.stimulate("sensory_chemo", strength=0.8)

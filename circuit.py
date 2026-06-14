@@ -20,6 +20,10 @@ def build_neural_circuit(ns: NervousSystem, bus: MessageBus):
       sensory_cardiac  ──► inter_brainstem  ──►  motor_cardiac      → heart.regulate
       sensory_chemo    ──► inter_brainstem  ──►  motor_respiratory  → lungs.breathe_faster
       sensory_glucose  ──► inter_hypothal   ──►  motor_cardiac (inhibitory)
+      sensory_spaces   ──► inter_hypothal   ──►  motor_respiratory  → compensate breathing
+
+    sensory_spaces (Zhang 2020): fires when physiological space quality drops below
+    0.7 — drives hypothalamic interneuron to increase respiratory rate as compensation.
 
     Inhibitory synapse: inter_hypothalamus → motor_cardiac (weight=-0.5)
     LTP: all excitatory synapses strengthen with repeated use.
@@ -35,6 +39,7 @@ def build_neural_circuit(ns: NervousSystem, bus: MessageBus):
     ns.add_neuron("sensory_cardiac",    threshold=0.5,  decay_rate=0.05)
     ns.add_neuron("sensory_chemo",      threshold=0.5,  decay_rate=0.04)
     ns.add_neuron("sensory_glucose",    threshold=0.9,  decay_rate=0.05)
+    ns.add_neuron("sensory_spaces",     threshold=0.6,  decay_rate=0.04)  # Zhang 2020
 
     # Interneurons
     ns.add_neuron("inter_brainstem",    threshold=1.0,  decay_rate=0.03)
@@ -51,6 +56,8 @@ def build_neural_circuit(ns: NervousSystem, bus: MessageBus):
     ns.connect("inter_brainstem",    "motor_respiratory",  weight=0.8,  delay=0.02)
     ns.connect("sensory_glucose",    "inter_hypothalamus", weight=1.0,  delay=0.03)
     ns.connect("inter_hypothalamus", "motor_cardiac",      weight=-0.5, delay=0.03)  # inhibitory
+    ns.connect("sensory_spaces",     "inter_hypothalamus", weight=0.7,  delay=0.025)
+    ns.connect("inter_hypothalamus", "motor_respiratory",  weight=0.5,  delay=0.02)
 
     # Motor callbacks — fired neuron → organ command via bus
     async def on_motor_cardiac(neuron):

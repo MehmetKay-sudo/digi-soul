@@ -27,6 +27,7 @@ from core.bus import MessageBus
 from core.endocrine_bus import EndocrineBus
 from hardware.bridge import HardwareBridge
 from hardware.mock_robot import MockRobot
+from physiology.spaces import SpacePhysiology
 
 from organs.brain import Brain
 from organs.heart import Heart
@@ -54,6 +55,7 @@ async def run(run_seconds: float, inject_stress: bool):
     bus.bridge = bridge
 
     # ── Organs ─────────────────────────────────────────────────────────
+    space    = SpacePhysiology(bus, endocrine)
     heart    = Heart(bus, bpm=60)
     lungs    = Lungs(bus, breath_interval=2.0)
     brain    = Brain(bus)
@@ -64,7 +66,8 @@ async def run(run_seconds: float, inject_stress: bool):
     adrenal  = AdrenalGland(bus, endocrine)
     immune   = ImmuneSystem(bus, endocrine)
 
-    organs = [heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune]
+    # space_physiology registered first so heart/lungs/kidney find it at run-start
+    organs = [space, heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune]
     for organ in organs:
         bus.register(organ)
 
@@ -105,13 +108,13 @@ def _report(bus, endocrine, robot, run_seconds):
     print("=" * 60)
     print("DIGI-SOUL HEADLESS TEST REPORT")
     print("=" * 60)
-    print(f"subsystems reporting : {len(ui_events)} / 10")
+    print(f"subsystems reporting : {len(ui_events)} / 11")
     print(f"UI events per system : "
           f"{ {k: counts[k] for k in sorted(counts)} }")
     print()
 
     print("--- ORGAN STATES ---")
-    for name in ["heart", "lungs", "brain", "stomach", "liver",
+    for name in ["space_physiology", "heart", "lungs", "brain", "stomach", "liver",
                  "kidney", "pancreas", "adrenal_gland", "immune_system"]:
         if name in ui_events:
             print(f"  {name:<14} {ui_events[name]}")
@@ -145,7 +148,7 @@ def _report(bus, endocrine, robot, run_seconds):
     # Some subsystems only emit on slow timers (immune patrol ~8s, adrenal
     # monitor ~3s) or when triggered, so on short runs fewer than 10 may have
     # reported yet. Require the full set only on runs long enough to expect it.
-    expected_systems = 10 if run_seconds >= 10 else 8
+    expected_systems = 11 if run_seconds >= 10 else 9
     all_reporting = len(ui_events) >= expected_systems
     neural_ok = total_tx > 0 or run_seconds < 10
     ok = all_reporting and neural_ok

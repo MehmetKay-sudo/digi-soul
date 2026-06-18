@@ -38,20 +38,24 @@ from organs.stomach import Stomach
 from organs.pancreas import Pancreas
 from organs.adrenal_gland import AdrenalGland
 from organs.immune_system import ImmuneSystem
+from organs.muscular_system import MuscularSystem
+from organs.vascular_system import VascularSystem
 
 from nervous_system.nervous_system import NervousSystem
 
-# Import the same circuit builder used in production (circuit.py is GUI-free,
-# so this import works headless). Keeps test tuning identical to main.py.
+# Import the same circuit builder used in production (circuit.py is GUI-free).
 from circuit import build_neural_circuit
+
+# Total expected subsystems: 11 original + muscular_system + vascular_system = 13
+TOTAL_SUBSYSTEMS = 13
 
 
 async def run(run_seconds: float, inject_stress: bool):
     # ── Buses + hardware ───────────────────────────────────────────────
-    bus = MessageBus()
+    bus       = MessageBus()
     endocrine = EndocrineBus()
-    robot = MockRobot()
-    bridge = HardwareBridge(robot)
+    robot     = MockRobot()
+    bridge    = HardwareBridge(robot)
     bus.bridge = bridge
 
     # ── Organs ─────────────────────────────────────────────────────────
@@ -65,9 +69,14 @@ async def run(run_seconds: float, inject_stress: bool):
     pancreas = Pancreas(bus, endocrine)
     adrenal  = AdrenalGland(bus, endocrine)
     immune   = ImmuneSystem(bus, endocrine)
+    muscles  = MuscularSystem(bus, endocrine)
+    vascular = VascularSystem(bus, endocrine)
 
-    # space_physiology registered first so heart/lungs/kidney find it at run-start
-    organs = [space, heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune]
+    # space_physiology registered first so heart/lungs/kidney/vascular find it
+    organs = [
+        space, heart, lungs, brain, stomach, liver,
+        kidney, pancreas, adrenal, immune, muscles, vascular,
+    ]
     for organ in organs:
         bus.register(organ)
 
@@ -84,7 +93,6 @@ async def run(run_seconds: float, inject_stress: bool):
     if inject_stress:
         async def stressor():
             await asyncio.sleep(min(5.0, run_seconds / 2))
-            # Simulate an infection to exercise immune → cytokine → brain alert
             await bus.route("test_run", "immune_system",
                             {"signal": "pathogen", "severity": 0.9})
         tasks.append(asyncio.create_task(stressor()))
@@ -97,33 +105,35 @@ async def run(run_seconds: float, inject_stress: bool):
 
 
 def _report(bus, endocrine, robot, run_seconds):
-    # Collapse the UI queue to the latest snapshot per subsystem
     ui_events: dict = {}
-    counts: dict = {}
+    counts:    dict = {}
     while not bus.ui_queue.empty():
         name, state = bus.ui_queue.get_nowait()
         ui_events[name] = state
-        counts[name] = counts.get(name, 0) + 1
+        counts[name]    = counts.get(name, 0) + 1
 
     print("=" * 60)
     print("DIGI-SOUL HEADLESS TEST REPORT")
     print("=" * 60)
-    print(f"subsystems reporting : {len(ui_events)} / 11")
+    print(f"subsystems reporting : {len(ui_events)} / {TOTAL_SUBSYSTEMS}")
     print(f"UI events per system : "
           f"{ {k: counts[k] for k in sorted(counts)} }")
     print()
 
     print("--- ORGAN STATES ---")
-    for name in ["space_physiology", "heart", "lungs", "brain", "stomach", "liver",
-                 "kidney", "pancreas", "adrenal_gland", "immune_system"]:
+    for name in [
+        "space_physiology", "heart", "lungs", "brain", "stomach", "liver",
+        "kidney", "pancreas", "adrenal_gland", "immune_system",
+        "muscular_system", "vascular_system",
+    ]:
         if name in ui_events:
-            print(f"  {name:<14} {ui_events[name]}")
+            print(f"  {name:<16} {ui_events[name]}")
     print()
 
     print("--- NERVOUS SYSTEM (proof the circuit is alive) ---")
     ns_state = ui_events.get("nervous_system", {})
-    meta = ns_state.get("_meta", {}) if isinstance(ns_state, dict) else {}
-    fires = {k: v.get("fires") for k, v in ns_state.items() if k != "_meta"}
+    meta     = ns_state.get("_meta", {}) if isinstance(ns_state, dict) else {}
+    fires    = {k: v.get("fires") for k, v in ns_state.items() if k != "_meta"}
     print(f"  sleep state          : {meta.get('sleep_state')}")
     print(f"  total transmissions  : {meta.get('total_transmissions')}")
     print(f"  neuron fire counts   : {fires}")
@@ -141,17 +151,16 @@ def _report(bus, endocrine, robot, run_seconds):
         print(f"  {k:<14} {v}")
     print()
 
-    # Lightweight assertions so the test fails loudly if a pathway dies.
-    # The neural circuit needs a handful of heartbeats to accumulate and fire,
-    # so only require transmissions on runs long enough to expect them (~10s+).
+    # ── Pass/fail assertions ───────────────────────────────────────────
     total_tx = meta.get("total_transmissions", 0)
-    # Some subsystems only emit on slow timers (immune patrol ~8s, adrenal
-    # monitor ~3s) or when triggered, so on short runs fewer than 10 may have
-    # reported yet. Require the full set only on runs long enough to expect it.
-    expected_systems = 11 if run_seconds >= 10 else 9
-    all_reporting = len(ui_events) >= expected_systems
-    neural_ok = total_tx > 0 or run_seconds < 10
-    ok = all_reporting and neural_ok
+
+    # On runs >= 10s expect all 13 subsystems; shorter runs may miss slow ones
+    # (immune patrol ~8s, adrenal monitor ~3s, vascular ~1s, muscles ~1s)
+    expected_systems = TOTAL_SUBSYSTEMS if run_seconds >= 10 else 11
+    all_reporting    = len(ui_events) >= expected_systems
+    neural_ok        = total_tx > 0 or run_seconds < 10
+    ok               = all_reporting and neural_ok
+
     if ok:
         msg = "PASS — all subsystems live"
         if total_tx > 0:

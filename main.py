@@ -20,6 +20,8 @@ from organs.stomach import Stomach
 from organs.pancreas import Pancreas
 from organs.adrenal_gland import AdrenalGland
 from organs.immune_system import ImmuneSystem
+from organs.muscular_system import MuscularSystem
+from organs.vascular_system import VascularSystem
 
 from nervous_system.nervous_system import NervousSystem
 from circuit import build_neural_circuit
@@ -46,28 +48,33 @@ def start_asyncio(organs, ns, endocrine):
 
 def main():
     # ── Core buses ────────────────────────────────────────────────────
-    bus      = MessageBus()
+    bus       = MessageBus()
     endocrine = EndocrineBus()
 
     # ── Hardware bridge ────────────────────────────────────────────────
     robot  = MockRobot()
     bridge = HardwareBridge(robot)
-    bus.bridge = bridge   # bus calls bridge.process() on every state update
+    bus.bridge = bridge
 
     # ── Organs ────────────────────────────────────────────────────────
-    space        = SpacePhysiology(bus, endocrine)
-    heart        = Heart(bus, bpm=60)
-    lungs        = Lungs(bus, breath_interval=2.0)
-    brain        = Brain(bus)
-    stomach      = Stomach(bus)
-    liver        = Liver(bus)
-    kidney       = Kidney(bus, endocrine)
-    pancreas     = Pancreas(bus, endocrine)
-    adrenal      = AdrenalGland(bus, endocrine)
-    immune       = ImmuneSystem(bus, endocrine)
+    # space_physiology must be registered first so organs find it in run()
+    space    = SpacePhysiology(bus, endocrine)
+    heart    = Heart(bus, bpm=60)
+    lungs    = Lungs(bus, breath_interval=2.0)
+    brain    = Brain(bus)
+    stomach  = Stomach(bus)
+    liver    = Liver(bus)
+    kidney   = Kidney(bus, endocrine)
+    pancreas = Pancreas(bus, endocrine)
+    adrenal  = AdrenalGland(bus, endocrine)
+    immune   = ImmuneSystem(bus, endocrine)
+    muscles  = MuscularSystem(bus, endocrine)
+    vascular = VascularSystem(bus, endocrine)
 
-    # space_physiology must be registered first so organs find it in their run()
-    organs = [space, heart, lungs, brain, stomach, liver, kidney, pancreas, adrenal, immune]
+    organs = [
+        space, heart, lungs, brain, stomach, liver,
+        kidney, pancreas, adrenal, immune, muscles, vascular,
+    ]
     for organ in organs:
         bus.register(organ)
 
@@ -94,10 +101,10 @@ def main():
     root = tk.Tk()
     BodyCanvas(
         root,
-        ui_queue       = bus.ui_queue,
+        ui_queue        = bus.ui_queue,
         endocrine_queue = endocrine.ui_queue,
-        hw_queue       = bridge.state_queue,
-        image_path     = str(IMAGE_PATH),
+        hw_queue        = bridge.state_queue,
+        image_path      = str(IMAGE_PATH),
     )
     root.mainloop()
 

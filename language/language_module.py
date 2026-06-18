@@ -5,12 +5,20 @@ Handles ingestion, storage, and retrieval of text (*.txt) files.
 Uses the Anthropic API (Claude) to generate speech from loaded memory.
 Integrates with the Brain via the MessageBus.
 
+Universal Grammar layer (Chomsky, "Language and Mind"):
+  Every text loaded is annotated against six innate UG primitives (AGENT,
+  ACTION, STATE, NEGATION, MODIFIER, QUESTION). The structural summary of
+  the corpus is prepended to each speak() system prompt so Claude generates
+  language consistent with Digi-Soul's current linguistic register.
+  A new "parse" command exposes the UG structure of any input text.
+
 Signals received (from brain or other organs):
     { "signal": "language", "cmd": "load",   "path": "<filepath>" }
     { "signal": "language", "cmd": "save",   "text": "<text>", "filename": "<name.txt>" }
     { "signal": "language", "cmd": "query",  "keyword": "<word>" }
     { "signal": "language", "cmd": "recall", "doc_id": "<id>" }
     { "signal": "language", "cmd": "speak",  "prompt": "<text>", "style": "<style>" }
+    { "signal": "language", "cmd": "parse",  "text": "<text>" }   ← NEW
 
 Signals emitted → brain:
     { "signal": "language_result", "cmd": "...", "result": ... }
@@ -29,16 +37,17 @@ from pathlib import Path
 import anthropic
 
 from core.organ import Organ
+from language.universal_grammar import UniversalGrammar
 
-STORAGE_DIR = Path(__file__).parent / "memory"
+STORAGE_DIR  = Path(__file__).parent / "memory"
 CLAUDE_MODEL = "claude-opus-4-6"
 
 
 class LanguageModule(Organ):
     """
-    Language processing module — reads and stores .txt files,
-    builds a simple vocabulary index, and answers keyword queries.
-    Acts as an Organ so it plugs straight into the MessageBus.
+    Language processing module — reads and stores .txt files, builds a
+    vocabulary index, answers keyword queries, generates speech via Claude,
+    and parses text using the Universal Grammar layer.
     """
 
     def __init__(self, bus, storage_dir: Path = STORAGE_DIR):
@@ -46,10 +55,13 @@ class LanguageModule(Organ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
 
-        # In-memory corpus: { doc_id: {"text": str, "path": Path, "vocab": Counter} }
+        # In-memory corpus: { doc_id: {"text", "path", "vocab", "ug_annotation"} }
         self.corpus: dict[str, dict] = {}
 
-        # Anthropic client — reads ANTHROPIC_API_KEY from environment
+        # Universal Grammar — innate linguistic structure (Chomsky)
+        self._ug = UniversalGrammar()
+
+        # Anthropic client
         self._claude = anthropic.Anthropic()
 
         self.state = {
@@ -59,25 +71,23 @@ class LanguageModule(Organ):
             "last_doc_id":   None,
             "vocab_size":    0,
             "last_spoken":   None,
+            "grammar_stats": {},   # UG category distribution over full corpus
             "alert":         None,
         }
 
-    # ── Public helpers (usable directly without the bus) ───────────────
+    # ── Public helpers ────────────────────────────────────────────────────
 
     def load_file(self, path: str | Path) -> str:
-        """Read a .txt file, index it, and return its doc_id."""
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         if path.suffix.lower() != ".txt":
             raise ValueError(f"Only .txt files are supported, got: {path.suffix}")
-
-        text = path.read_text(encoding="utf-8")
+        text   = path.read_text(encoding="utf-8")
         doc_id = self._index(text, source_path=path)
         return doc_id
 
     def save_text(self, text: str, filename: str) -> Path:
-        """Persist raw text to storage_dir and index it. Returns saved path."""
         if not filename.endswith(".txt"):
             filename += ".txt"
         dest = self.storage_dir / filename
@@ -86,7 +96,6 @@ class LanguageModule(Organ):
         return dest
 
     def query(self, keyword: str) -> list[dict]:
-        """Return docs that contain keyword, sorted by frequency."""
         kw = keyword.lower().strip()
         results = []
         for doc_id, doc in self.corpus.items():
@@ -103,15 +112,25 @@ class LanguageModule(Organ):
 
     def speak(self, prompt: str, style: str = "thoughtful") -> str:
         """
-        Generate a spoken response via Claude, grounded in the loaded language memory.
-        The corpus is injected as the system context so Digi-Soul speaks from what it knows.
+        Generate a spoken response via Claude, grounded in:
+          1. The loaded language memory (corpus)
+          2. The Universal Grammar structural summary (Chomsky UG)
+
+        The UG layer ensures the generated language is consistent with
+        the dominant structural register of the corpus — an action-dominant
+        corpus produces more imperative speech; a state-dominant corpus
+        produces more declarative speech.
         """
         corpus_context = self._build_corpus_context()
+        ug_summary     = self._ug.structural_summary()
+
         system = (
             "You are the language centre of Digi-Soul, a digital humanoid brain. "
             "You speak with the knowledge, vocabulary, and style drawn from your language memory. "
-            f"Your language memory currently contains:\n\n{corpus_context}\n\n"
-            f"Speak in a {style} style. Be concise — two to four sentences maximum."
+            f"Your language memory contains:\n\n{corpus_context}\n\n"
+            f"Linguistic structure (Universal Grammar analysis):\n{ug_summary}\n\n"
+            f"Speak in a {style} style. Be concise — two to four sentences maximum. "
+            "Let the UG register guide your sentence structure."
         )
         message = self._claude.messages.create(
             model=CLAUDE_MODEL,
@@ -122,18 +141,18 @@ class LanguageModule(Organ):
         return message.content[0].text.strip()
 
     def recall(self, doc_id: str) -> dict | None:
-        """Return full stored document or None."""
         doc = self.corpus.get(doc_id)
         if not doc:
             return None
         return {
-            "doc_id": doc_id,
-            "path":   str(doc["path"]),
-            "text":   doc["text"],
-            "words":  sum(doc["vocab"].values()),
+            "doc_id":        doc_id,
+            "path":          str(doc["path"]),
+            "text":          doc["text"],
+            "words":         sum(doc["vocab"].values()),
+            "ug_annotation": doc.get("ug_annotation", {}),
         }
 
-    # ── Organ loop (MessageBus integration) ────────────────────────────
+    # ── Organ loop ────────────────────────────────────────────────────────
 
     async def run(self):
         while True:
@@ -141,13 +160,12 @@ class LanguageModule(Organ):
             if msg.get("signal") != "language":
                 continue
 
-            cmd = msg.get("cmd", "")
+            cmd    = msg.get("cmd", "")
             result = await self._handle(cmd, msg)
             self.bus.update_ui("language_module", dict(self.state))
-
             await self.send("brain", signal="language_result", cmd=cmd, result=result)
 
-    # ── Internal ───────────────────────────────────────────────────────
+    # ── Internal dispatch ─────────────────────────────────────────────────
 
     async def _handle(self, cmd: str, msg: dict):
         try:
@@ -158,7 +176,7 @@ class LanguageModule(Organ):
 
             elif cmd == "save":
                 filename = msg.get("filename") or self._auto_filename()
-                dest = self.save_text(msg["text"], filename)
+                dest     = self.save_text(msg["text"], filename)
                 self.state["last_action"] = f"saved {dest.name}"
                 return {"ok": True, "path": str(dest)}
 
@@ -175,11 +193,21 @@ class LanguageModule(Organ):
             elif cmd == "speak":
                 prompt = msg.get("prompt", "Say something.")
                 style  = msg.get("style", "thoughtful")
-                loop = asyncio.get_running_loop()
-                text = await loop.run_in_executor(None, lambda: self.speak(prompt, style))
+                loop   = asyncio.get_running_loop()
+                text   = await loop.run_in_executor(
+                    None, lambda: self.speak(prompt, style)
+                )
                 self.state["last_action"] = f"spoke ({style})"
-                self.state["last_spoken"] = text[:80] + ("…" if len(text) > 80 else "")
+                self.state["last_spoken"] = (
+                    text[:80] + ("…" if len(text) > 80 else "")
+                )
                 return {"ok": True, "text": text}
+
+            elif cmd == "parse":
+                text   = msg.get("text", "")
+                result = self._ug.parse(text)
+                self.state["last_action"] = f"parsed text ({result['sentence_count']} sentences)"
+                return {"ok": True, "parse_result": result}
 
             else:
                 return {"ok": False, "error": f"Unknown cmd: {cmd}"}
@@ -189,29 +217,38 @@ class LanguageModule(Organ):
             return {"ok": False, "error": str(exc)}
 
     def _index(self, text: str, source_path: Path) -> str:
-        """Tokenise text, build vocab Counter, store in corpus."""
-        tokens = re.findall(r"[a-zA-ZÀ-ÿ]+", text.lower())
-        vocab  = Counter(tokens)
-        doc_id = source_path.stem + "_" + datetime.now().strftime("%H%M%S%f")
+        tokens     = re.findall(r"[a-zA-ZÀ-ÿ]+", text.lower())
+        vocab      = Counter(tokens)
+        ug_ann     = self._ug.annotate(text)
+        doc_id     = source_path.stem + "_" + datetime.now().strftime("%H%M%S%f")
 
         self.corpus[doc_id] = {
-            "text":  text,
-            "path":  source_path,
-            "vocab": vocab,
+            "text":          text,
+            "path":          source_path,
+            "vocab":         vocab,
+            "ug_annotation": ug_ann,
         }
 
-        # Update shared state
         self.state["docs_loaded"] += 1
         self.state["last_doc_id"]  = doc_id
         self.state["last_action"]  = f"indexed {source_path.name}"
         self.state["vocab_size"]   = len(
             set().union(*(d["vocab"].keys() for d in self.corpus.values()))
         )
+        # Update grammar stats: average UG distribution across corpus
+        cats = list(ug_ann.keys())
+        self.state["grammar_stats"] = {
+            cat: round(
+                sum(d["ug_annotation"].get(cat, 0) for d in self.corpus.values())
+                / len(self.corpus),
+                3,
+            )
+            for cat in cats
+        }
         return doc_id
 
     @staticmethod
     def _excerpt(text: str, keyword: str, window: int = 60) -> str:
-        """Return a short excerpt around the first occurrence of keyword."""
         idx = text.lower().find(keyword)
         if idx == -1:
             return ""
@@ -220,13 +257,15 @@ class LanguageModule(Organ):
         return ("…" if start else "") + text[start:end].strip() + ("…" if end < len(text) else "")
 
     def _build_corpus_context(self, max_docs: int = 6, preview_chars: int = 300) -> str:
-        """Summarise the loaded corpus for Claude's system prompt."""
         if not self.corpus:
             return "(no language memory loaded yet)"
         parts = []
         for doc in list(self.corpus.values())[:max_docs]:
             preview = doc["text"][:preview_chars].replace("\n", " ").strip()
-            parts.append(f"• [{doc['path'].name}] {preview}{'…' if len(doc['text']) > preview_chars else ''}")
+            parts.append(
+                f"• [{doc['path'].name}] {preview}"
+                f"{'…' if len(doc['text']) > preview_chars else ''}"
+            )
         return "\n".join(parts)
 
     @staticmethod

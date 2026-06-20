@@ -28,7 +28,7 @@ class Neuron:
         while True:
             msg = await self.inbox.get()
             strength = msg.get("strength", 1.0)
-            self.potential = max(0.0, self.potential + strength)   # inhibitory → can't go negative
+            self.potential += strength   # can go negative (hyperpolarization)
             if self.potential >= self.threshold:
                 await self._fire()
 
@@ -41,8 +41,10 @@ class Neuron:
             asyncio.create_task(synapse.transmit())
 
     async def _decay_loop(self):
-        """Leaky integrator — potential slowly fades without input."""
+        """Leaky integrator — potential recovers toward 0 from both directions."""
         while True:
             await asyncio.sleep(0.5)
             if self.potential > 0:
                 self.potential = max(0.0, self.potential - self.decay_rate)
+            elif self.potential < 0:
+                self.potential = min(0.0, self.potential + self.decay_rate)

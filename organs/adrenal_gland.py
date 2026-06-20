@@ -26,8 +26,9 @@ class AdrenalGland(Organ):
         self.endocrine = endocrine
         self.state = {
             "mode": "rest",
-            "adrenaline": 0.0,
-            "cortisol":   round(endocrine.get_level("cortisol"), 1),
+            "adrenaline":  0.0,
+            "cortisol":    round(endocrine.get_level("cortisol"), 1),
+            "aldosterone": 0.0,
             "last_trigger": "—",
         }
 
@@ -43,6 +44,16 @@ class AdrenalGland(Organ):
             elif signal == "oxygen":
                 if msg.get("level", 100) < 90:
                     await self._activate(msg, intensity=0.6)
+
+            elif signal == "raas":
+                # RAAS chain: kidney renin → angiotensin → adrenal cortex → aldosterone
+                renin = msg.get("renin", 0)
+                aldo_amount = round(renin * 0.3, 1)
+                self.endocrine.secrete("aldosterone", amount=aldo_amount, source="adrenal_gland")
+                self.state["mode"] = "raas-response"
+                self.state["last_trigger"] = f"RAAS renin={renin:.0f}"
+                self._sync_levels()
+                self.bus.update_ui("adrenal_gland", dict(self.state))
 
             elif signal == "pulse":
                 # Monitor for tachycardia (BPM already handled by brain, but adrenal reacts too)
@@ -75,5 +86,6 @@ class AdrenalGland(Organ):
             self.bus.update_ui("adrenal_gland", dict(self.state))
 
     def _sync_levels(self):
-        self.state["adrenaline"] = round(self.endocrine.get_level("adrenaline"), 1)
-        self.state["cortisol"]   = round(self.endocrine.get_level("cortisol"),   1)
+        self.state["adrenaline"]  = round(self.endocrine.get_level("adrenaline"),  1)
+        self.state["cortisol"]    = round(self.endocrine.get_level("cortisol"),    1)
+        self.state["aldosterone"] = round(self.endocrine.get_level("aldosterone"), 1)

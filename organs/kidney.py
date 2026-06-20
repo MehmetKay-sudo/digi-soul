@@ -144,16 +144,25 @@ class Kidney(Organ):
             bp = self.state["bp_systolic"]
 
             if bp < self.BP_LOW_THRESHOLD:
-                # Activate RAAS
+                # Activate RAAS: kidney → renin → angiotensin → adrenal → aldosterone
                 self.state["renin_level"] = min(100, self.state["renin_level"] + 8)
-                self.state["fluid_balance"] = min(115, self.state["fluid_balance"] + 3)
                 self.state["last_action"] = f"RAAS active (renin={self.state['renin_level']:.0f})"
+                await self.send("adrenal_gland", signal="raas",
+                                renin=self.state["renin_level"])
             elif bp > self.BP_HIGH_THRESHOLD:
                 # Suppress renin
                 self.state["renin_level"] = max(0, self.state["renin_level"] - 6)
             else:
                 # Normal range — slow decay
                 self.state["renin_level"] = max(0, self.state["renin_level"] - 2)
+
+            # Aldosterone (secreted by adrenal in response to renin) → Na+ retention → fluid up
+            if self.endocrine:
+                aldo = self.endocrine.get_level("aldosterone")
+                if aldo > 10:
+                    self.state["fluid_balance"] = min(115,
+                        self.state["fluid_balance"] + aldo * 0.05)
+                    self.state["last_action"] = f"aldosterone: Na+ retention ({aldo:.0f}u)"
 
             self.bus.update_ui("kidney", dict(self.state))
 
@@ -169,8 +178,9 @@ class Kidney(Organ):
 
             # Respiratory component: rising CO2 lowers pH (respiratory acidosis)
             co2_deviation = self._last_co2 - 40.0
+            # 0.008 per mmHg: every 10 mmHg rise in PCO2 → pH falls ~0.08 (Elmas 2025 §2.4)
             self.state["ph"] = round(
-                max(7.10, min(7.60, 7.40 - co2_deviation * 0.015)), 2
+                max(7.10, min(7.60, 7.40 - co2_deviation * 0.008)), 2
             )
 
             # Renal compensation: adjust bicarbonate to buffer pH

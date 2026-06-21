@@ -8,6 +8,13 @@ Based on: Elmas & Kunduracioglu (2025) §2.4 — Kidney functions include:
   - Fluid & electrolyte balance, acid-base homeostasis
 
 Also: Zhang (2020) — space quality affects filtration efficiency.
+
+ADH/AQP2 model grounded in verified PubMed literature:
+  - Jung & Kwon 2016 (PMID 27760771) — AQP2 trafficking backbone
+  - Kharin & Klussmann 2024 (PMID 37440212) — membrane insertion as rate-limiting step
+  - D'Acierno et al. 2025 (PMID 39435642) — water homeostasis axis review
+  - PMID 30252325 — osmoreceptor threshold, SIADH bounds, urine osmolality range
+  - PMID 36233678 — AVP-independent AQP2 membrane fraction baseline
 """
 
 import asyncio
@@ -33,6 +40,13 @@ class Kidney(Organ):
     # Blood flow (from vascular_system blood_flow broadcast)
     BASELINE_KIDNEY_FLOW = 20  # % of cardiac output at rest
 
+    # ADH/AQP2 water reabsorption — PubMed-verified constants
+    OSMORECEPTOR_THRESHOLD = 2.0  # mOsm/L minimum detectable osmolality change (PMID 30252325)
+    URINE_OSM_MIN  = 100          # mOsm/kg — SIADH floor / max diuresis (PMID 30252325)
+    URINE_OSM_CONC = 750          # mOsm/kg — normal antidiuresis target (PMID 30252325)
+    URINE_OSM_MAX  = 1200         # mOsm/kg — maximum concentration ceiling
+    AQP2_BASELINE  = 0.10         # AVP-independent membrane fraction (PMID 36233678)
+
     def __init__(self, bus, endocrine=None):
         super().__init__("kidney", bus)
         self.endocrine = endocrine
@@ -46,8 +60,12 @@ class Kidney(Organ):
             "bp_systolic": 120,                  # mmHg — simulated
             "renin_level": 0,                    # RAAS: renin activity (0-100)
             "erythropoietin": self.EPO_BASE,     # mU/mL
-            "ph":          7.40,                 # arterial pH — normal 7.35-7.45 (Elmas 2025 §2.4)
-            "bicarbonate": 24,                   # mEq/L — renal buffer (normal 22-26)
+            "ph":              7.40,   # arterial pH — normal 7.35-7.45 (Elmas 2025 §2.4)
+            "bicarbonate":     24,     # mEq/L — renal buffer (normal 22-26)
+            "urine_osmolality": 600,   # mOsm/kg — range 100-1200 (PMID 30252325)
+            "aqp2_fast":       0.0,    # fast vesicle-trafficking AQP2 component
+            "aqp2_slow":       0.0,    # slow transcriptional AQP2 component
+            "aqp2_membrane":   0.10,   # total AQP2 membrane fraction (PMID 27760771)
             "last_action": "—",
         }
         self._beats = 0
@@ -206,15 +224,48 @@ class Kidney(Organ):
                 await self.send("brain", signal="alert",
                                 source="kidney", msg=f"acid-base crisis pH={ph}")
 
-            # ADH integration: secrete when dehydrated, respond to circulating ADH
+            # ADH/AQP2 two-timescale water reabsorption model
+            # Fast path: vesicle trafficking (seconds-minutes) — rate-limiting step (PMID 37440212)
+            # Slow path: transcriptional AQP2 upregulation (hours) (PMID 27760771)
+            # AVP-independent baseline fraction present at all times (PMID 36233678)
             if self.endocrine:
                 if self.state["fluid_balance"] < 92:
                     self.endocrine.secrete("adh", amount=15, source="kidney")
                 adh_level = self.endocrine.get_level("adh")
-                if adh_level > 20:
+
+                # Normalised ADH drive (0–1); internal threshold at 20u
+                adh_drive = max(0.0, (adh_level - 20) / 80.0)
+
+                # Fast component: vesicle trafficking, converges in seconds-minutes
+                aqp2_fast_target = adh_drive * 0.60
+                self.state["aqp2_fast"] += (aqp2_fast_target - self.state["aqp2_fast"]) * 0.30
+
+                # Slow component: transcriptional upregulation, converges over hours
+                aqp2_slow_target = adh_drive * 0.30
+                self.state["aqp2_slow"] += (aqp2_slow_target - self.state["aqp2_slow"]) * 0.01
+
+                # Total membrane fraction (AQP2_BASELINE = AVP-independent floor)
+                self.state["aqp2_membrane"] = round(
+                    self.AQP2_BASELINE + self.state["aqp2_fast"] + self.state["aqp2_slow"], 3
+                )
+
+                # Urine osmolality: scales with AQP2 membrane fraction above baseline
+                # Range: URINE_OSM_MIN (100) → URINE_OSM_MAX (1200) mOsm/kg (PMID 30252325)
+                aqp2_norm = (self.state["aqp2_membrane"] - self.AQP2_BASELINE) / 0.90
+                self.state["urine_osmolality"] = int(
+                    self.URINE_OSM_MIN
+                    + max(0.0, min(1.0, aqp2_norm)) * (self.URINE_OSM_MAX - self.URINE_OSM_MIN)
+                )
+
+                # Fluid retention driven by AQP2 membrane fraction above baseline
+                excess = self.state["aqp2_membrane"] - self.AQP2_BASELINE
+                if excess > 0.05:
                     self.state["fluid_balance"] = min(
-                        110, self.state["fluid_balance"] + adh_level * 0.1
+                        110, self.state["fluid_balance"] + excess * 5.0
                     )
-                    self.state["last_action"] = f"ADH water retention ({adh_level:.0f}u)"
+                    self.state["last_action"] = (
+                        f"AQP2 water retention (membrane={self.state['aqp2_membrane']:.2f}, "
+                        f"urine={self.state['urine_osmolality']} mOsm/kg)"
+                    )
 
             self.bus.update_ui("kidney", dict(self.state))

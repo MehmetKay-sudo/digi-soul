@@ -25,6 +25,7 @@ Thumbs.db
 *.zip
 digi-soul/
 
-# Science reports and generated PDFs — keep locally only
+# Science reports and generated PDFs — keep locally only, never push
 science reports/
 reports/*.pdf
+reports/**/*.pdf

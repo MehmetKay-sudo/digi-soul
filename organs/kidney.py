@@ -30,6 +30,9 @@ class Kidney(Organ):
     EPO_BASE = 10              # mU/mL baseline
     EPO_HYPOXIA_THRESHOLD = 95 # blood O2% below this → EPO boost
 
+    # Blood flow (from vascular_system blood_flow broadcast)
+    BASELINE_KIDNEY_FLOW = 20  # % of cardiac output at rest
+
     def __init__(self, bus, endocrine=None):
         super().__init__("kidney", bus)
         self.endocrine = endocrine
@@ -97,6 +100,13 @@ class Kidney(Organ):
                 else:
                     self.state["erythropoietin"] = max(self.EPO_BASE,
                                                        self.state["erythropoietin"] - 0.5)
+
+            elif signal == "blood_flow":
+                # Renal perfusion scales GFR: fight-or-flight cuts kidney flow → lower GFR
+                kidney_flow = msg.get("flows", {}).get("kidneys", self.BASELINE_KIDNEY_FLOW)
+                ratio = max(0.3, min(1.2, kidney_flow / self.BASELINE_KIDNEY_FLOW))
+                self.state["filtration_rate"] = int(self.NORMAL_GFR * ratio)
+                self.state["last_action"] = f"renal flow {kidney_flow}%: GFR={self.state['filtration_rate']}"
 
             elif signal == "space_status":
                 # Zhang 2020: space narrowing reduces filtration efficiency

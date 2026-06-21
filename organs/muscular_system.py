@@ -33,10 +33,11 @@ import asyncio
 
 from core.organ import Organ
 
-FATIGUE_ALERT   = 80.0   # percent — triggers brain alert
-FATIGUE_RATE    = 8.0    # percent per second while active
-RECOVERY_RATE   = 2.0    # percent per second while resting
-MUSCLE_GROUPS   = ("locomotion", "arms", "posture")
+FATIGUE_ALERT        = 80.0   # percent — triggers brain alert
+FATIGUE_RATE         = 8.0    # percent per second while active
+RECOVERY_RATE        = 2.0    # percent per second while resting
+MUSCLE_GROUPS        = ("locomotion", "arms", "posture")
+BASELINE_MUSCLE_FLOW = 15     # % of cardiac output at rest (vascular_system default)
 
 
 class MuscularSystem(Organ):
@@ -48,11 +49,12 @@ class MuscularSystem(Organ):
             "status":         "idle",
             "activity_level": 0,
             "fatigue": {g: 0.0 for g in MUSCLE_GROUPS},
-            "strength_boost": 0.0,    # adrenaline-driven
-            "glucose_level":  90,
-            "oxygen_level":   100,
-            "last_action":    "—",
-            "alert":          None,
+            "strength_boost":   0.0,    # adrenaline-driven
+            "glucose_level":    90,
+            "oxygen_level":     100,
+            "perfusion_factor": 1.0,    # scales with blood_flow from vascular_system
+            "last_action":      "—",
+            "alert":            None,
         }
         self._active: set[str] = set()
 
@@ -70,6 +72,11 @@ class MuscularSystem(Organ):
                 self.state["oxygen_level"] = msg.get("level", 100)
             elif signal == "glucose":
                 self.state["glucose_level"] = msg.get("level", 90)
+            elif signal == "blood_flow":
+                muscle_flow = msg.get("flows", {}).get("muscles", BASELINE_MUSCLE_FLOW)
+                self.state["perfusion_factor"] = round(
+                    max(0.3, muscle_flow / BASELINE_MUSCLE_FLOW), 2
+                )
             elif signal == "circadian":
                 if msg.get("mode") == "sleep":
                     self._active.clear()
@@ -119,8 +126,9 @@ class MuscularSystem(Organ):
             for group in MUSCLE_GROUPS:
                 if group in self._active:
                     # Adrenaline slightly delays fatigue (boosts effective capacity)
-                    adr_bonus = 1.0 + self.state["strength_boost"] / 200
-                    eff_rate  = FATIGUE_RATE / (o2_factor * glc_factor * space_q * adr_bonus)
+                    adr_bonus  = 1.0 + self.state["strength_boost"] / 200
+                    perf_factor = self.state["perfusion_factor"]
+                    eff_rate   = FATIGUE_RATE / (o2_factor * glc_factor * space_q * adr_bonus * perf_factor)
                     self.state["fatigue"][group] = min(100.0,
                         self.state["fatigue"][group] + eff_rate)
                     activity += 33

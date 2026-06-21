@@ -15,6 +15,8 @@ ORGAN_CONFIG = {
     "adrenal_gland":     {"pos": (275, 375), "color": "#e74c3c", "label": "ADRENAL"},
     "immune_system":     {"pos": (230, 148), "color": "#1abc9c", "label": "IMMUNE"},
     "space_physiology":  {"pos": (230, 500), "color": "#5dade2", "label": "SPACES"},
+    "muscular_system":   {"pos": (148, 330), "color": "#d35400", "label": "MUSCLE"},
+    "vascular_system":   {"pos": (162, 300), "color": "#8e44ad", "label": "VASCULAR"},
 }
 
 CANVAS_W, CANVAS_H = 460, 700

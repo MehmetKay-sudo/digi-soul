@@ -68,6 +68,44 @@ BRAIN_TOOLS = [
         },
     },
     {
+        "name": "command_muscles",
+        "description": "Send an activity command to the muscular system.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cmd": {
+                    "type": "string",
+                    "enum": ["increase_activity", "decrease_activity", "recover_fatigue"],
+                    "description": (
+                        "increase_activity: raise muscle exertion level; "
+                        "decrease_activity: reduce exertion to conserve energy; "
+                        "recover_fatigue: trigger active fatigue recovery"
+                    ),
+                }
+            },
+            "required": ["cmd"],
+        },
+    },
+    {
+        "name": "command_vascular",
+        "description": "Send a vascular regulation command to the vascular system.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cmd": {
+                    "type": "string",
+                    "enum": ["dilate_vessels", "constrict_vessels", "normalize_bp"],
+                    "description": (
+                        "dilate_vessels: lower resistance to increase blood flow; "
+                        "constrict_vessels: raise resistance to increase BP; "
+                        "normalize_bp: return to resting vascular tone"
+                    ),
+                }
+            },
+            "required": ["cmd"],
+        },
+    },
+    {
         "name": "broadcast_alert",
         "description": "Broadcast a high-priority alert to all subsystems.",
         "input_schema": {
@@ -259,6 +297,10 @@ class Brain(Organ):
             await self.send("heart", signal="command", cmd=inputs["cmd"])
         elif name == "command_lungs":
             await self.send("lungs", signal="command", cmd=inputs["cmd"])
+        elif name == "command_muscles":
+            await self.send("muscular_system", signal="command", cmd=inputs["cmd"])
+        elif name == "command_vascular":
+            await self.send("vascular_system", signal="command", cmd=inputs["cmd"])
         elif name == "broadcast_alert":
             self.state["alert"] = inputs["message"]
             await self.broadcast(signal="alert", source="brain", msg=inputs["message"])

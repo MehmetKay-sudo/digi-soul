@@ -24,3 +24,7 @@ Thumbs.db
 # Project specific
 *.zip
 digi-soul/
+
+# Science reports and generated PDFs — keep locally only
+science reports/
+reports/*.pdf

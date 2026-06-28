@@ -284,6 +284,8 @@ class BodyCanvas:
         sleep_state = meta.get("sleep_state", "awake")
         total_tx    = meta.get("total_transmissions", 0)
         ltp         = meta.get("ltp_weights", {})
+        auto        = meta.get("autonomic", {})
+        hpa         = meta.get("hpa", {})
 
         self.body_canvas.itemconfig(
             self._sleep_indicator,
@@ -302,6 +304,46 @@ class BodyCanvas:
         self._ns_text.insert(tk.END, "\n  LTP WEIGHTS\n")
         for conn, w in ltp.items():
             self._ns_text.insert(tk.END, f"  {conn:<36} w={w}\n")
+
+        # ── Autonomic effectors + baroreflex ─────────────────────────
+        if auto:
+            self._ns_text.insert(tk.END, "\n  AUTONOMIC EFFECTORS\n")
+            vagal = auto.get("vagal_drive", 0.0)
+            symp  = auto.get("sympathetic_drive", 0.0)
+            self._ns_text.insert(
+                tk.END,
+                f"  vagal (parasymp)   {self._bar(vagal, 1.0, 12)} {vagal:>5.3f}\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  sympathetic        {self._bar(symp, 1.0, 12)} {symp:>5.3f}\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  baroreflex  MAP={auto.get('map_mmHg', 0.0):>5.1f} mmHg"
+                f"  BRS={auto.get('brs_ms_per_mmHg', 0.0):>4.1f} ms/mmHg\n")
+
+            # ── Emergent HRV metrics (index of vagal tone) ───────────
+            self._ns_text.insert(tk.END, "\n  HRV METRICS\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  SDNN={auto.get('sdnn', 0.0):>5.1f} ms"
+                f"   RMSSD={auto.get('rmssd', 0.0):>5.1f} ms\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  LF/HF={auto.get('lf_hf', 0.0):>5.2f}"
+                f"   HF power={auto.get('hf_power', 0.0):>5.1f} ms\n")
+
+        # ── HPA axis (cortisol negative-feedback loop) ───────────────
+        if hpa:
+            self._ns_text.insert(tk.END, "\n  HPA AXIS\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  CRH={hpa.get('crh', 0.0):>5.3f}"
+                f"   ACTH={hpa.get('acth', 0.0):>5.3f}\n")
+            self._ns_text.insert(
+                tk.END,
+                f"  cortisol={hpa.get('cortisol', 0.0):>5.1f}"
+                f"   feedback_gain={hpa.get('feedback_gain', 0.0):>4.2f}\n")
+
         self._ns_text.config(state=tk.DISABLED)
 
     def _update_endocrine(self, hormones: dict):

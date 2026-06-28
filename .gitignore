@@ -27,5 +27,7 @@ digi-soul/
 
 # Science reports and generated PDFs — keep locally only, never push
 science reports/
+science reports/*.pdf
+science reports/**/*.pdf
 reports/*.pdf
 reports/**/*.pdf

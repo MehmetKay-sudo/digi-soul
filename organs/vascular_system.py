@@ -128,6 +128,12 @@ class VascularSystem(Organ):
             self.state["pulse_pressure"] = round(
                 self.state["systolic"] - self.state["diastolic"], 1
             )
+            # Mean arterial pressure: MAP ≈ diastolic + (1/3) pulse pressure.
+            # Published to the nervous system to close the baroreflex loop
+            # (Draghici & Taylor 2018, PMID 28844537).
+            self.state["map"] = round(
+                self.state["diastolic"] + self.state["pulse_pressure"] / 3.0, 1
+            )
 
             # Fight-or-flight redistribution: muscles ↑, gut ↓
             if adr > 20:
@@ -163,6 +169,15 @@ class VascularSystem(Organ):
                 flows=dict(self.state["blood_flow"]),
                 o2_saturation=self.state["o2_saturation"],
                 cardiac_output=self.state["cardiac_output"],
+            )
+
+            # Publish mean arterial pressure to the baroreflex (nervous_system).
+            await self.send(
+                "nervous_system",
+                signal="blood_pressure",
+                systolic=self.state["systolic"],
+                diastolic=self.state["diastolic"],
+                map=self.state["map"],
             )
 
             self.bus.update_ui("vascular_system", dict(self.state))

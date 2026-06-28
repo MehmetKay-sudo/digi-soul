@@ -61,6 +61,10 @@ def build_neural_circuit(ns: NervousSystem, bus: MessageBus):
 
     # Motor callbacks — fired neuron → organ command via bus
     async def on_motor_cardiac(neuron):
+        # The cardiac reflex arc is vagally mediated (cardioinhibitory). Feed a
+        # fast phasic vagal burst into the autonomic controller so HR/HRV control
+        # flows through the two-arm effector model (Tan 2019, PMID 29654380).
+        ns.autonomic.request_vagal(0.2)
         await bus.route("nervous_system", "heart", {
             "signal": "neural_cmd", "cmd": "regulate"
         })

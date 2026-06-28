@@ -2,6 +2,7 @@ import asyncio
 
 from nervous_system.neuron import Neuron
 from nervous_system.synapse import Synapse
+from nervous_system.autonomic import AutonomicController, HPAAxis
 
 # Compressed sleep/wake cycle (seconds) — real circadian rhythm is 24h
 WAKE_DURATION  = 90    # seconds awake
@@ -9,6 +10,9 @@ SLEEP_DURATION = 45    # seconds asleep
 
 # During sleep, neuron thresholds are multiplied by this factor
 SLEEP_THRESHOLD_FACTOR = 2.2
+
+# Autonomic / HPA integration tick (seconds)
+AUTONOMIC_TICK = 0.5
 
 
 class NervousSystem:
@@ -25,7 +29,7 @@ class NervousSystem:
     Registers with MessageBus as "nervous_system" to receive all organ broadcasts.
     """
 
-    def __init__(self, bus, endocrine=None):
+    def __init__(self, bus, endocrine=None, hpa_feedback_gain: float = 1.0):
         self.bus = bus
         self.endocrine = endocrine          # optional, used for melatonin secretion
         self.name = "nervous_system"
@@ -33,6 +37,12 @@ class NervousSystem:
         self.neurons: dict[str, Neuron] = {}
         self.synapses: list[Synapse] = []
         self.sleep_state: str = "awake"
+
+        # Autonomic effector pathways (vagal-fast / sympathetic-slow) + baroreflex,
+        # and the HPA axis with tunable cortisol negative feedback.
+        self.autonomic = AutonomicController(bus, endocrine)
+        self.hpa = HPAAxis(endocrine, feedback_gain=hpa_feedback_gain)
+        self._hpa_diag: dict = {}
 
     # ------------------------------------------------------------------
     # Network construction
@@ -70,6 +80,7 @@ class NervousSystem:
             asyncio.create_task(self._organ_listener()),
             asyncio.create_task(self._monitor()),
             asyncio.create_task(self._sleep_wake_cycle()),
+            asyncio.create_task(self._autonomic_loop()),
         ]
         await asyncio.gather(*tasks)
 
@@ -85,10 +96,19 @@ class NervousSystem:
 
             if signal == "pulse" and sender == "heart":
                 beats = msg.get("beats", 0)
+                # Feed each cardiac cycle into the HRV/RSA buffer so HRV is an
+                # emergent diagnostic of vagal tone (Tan 2019, PMID 29654380).
+                self.autonomic.record_beat(msg.get("bpm", 0))
                 # Every 2nd beat keeps the cardiac sensory pathway warm so the
                 # interneuron → motor reflex arc and LTP engage at normal resting rate.
                 if beats % 2 == 0:
                     await self.stimulate("sensory_cardiac", strength=0.6)
+
+            elif signal == "blood_pressure":
+                # Baroreceptor afferent (Aδ/baroreflex) — close the negative-feedback
+                # loop against mean arterial pressure (Draghici & Taylor 2018,
+                # PMID 28844537). Default 93 mmHg is the operating set point.
+                self.autonomic.note_pressure(msg.get("map", 93.0))
 
             elif signal == "oxygen":
                 level = msg.get("level", 100)
@@ -113,8 +133,10 @@ class NervousSystem:
                                          strength=(0.7 - overall) * 20)
 
             elif signal == "alert":
-                # General threat → activate stress pathway
+                # General threat → activate stress pathway and inject a phasic
+                # sympathetic burst (graded, saturating — Shoemaker 2017 PMID 28871339).
                 await self.stimulate("sensory_chemo", strength=0.8)
+                self.autonomic.request_sympathetic(0.3)
 
     # ------------------------------------------------------------------
     # Sleep / Wake cycle
@@ -146,6 +168,28 @@ class NervousSystem:
         })
 
     # ------------------------------------------------------------------
+    # Autonomic + HPA integration loop
+    # ------------------------------------------------------------------
+
+    async def _autonomic_loop(self):
+        """Integrate the two autonomic effector arms + the HPA axis on a fixed tick.
+
+        The spiking circuit feeds phasic vagal/sympathetic *requests*; this loop
+        integrates them with the vagal-fast / sympathetic-slow latency asymmetry
+        (Draghici & Taylor 2018, PMID 28844537), closes the baroreflex against the
+        vascular system's published mean arterial pressure, drives the heart and
+        vasculature, then steps the HPA axis with explicit cortisol negative
+        feedback (Perrelli 2024, PMID 38927393).
+        """
+        while True:
+            await asyncio.sleep(AUTONOMIC_TICK)
+            self.autonomic.step(AUTONOMIC_TICK)
+            await self.autonomic.drive_effectors()
+            # Tonic sympathetic outflow above rest is the HPA stress drive.
+            stress_drive = max(0.0, self.autonomic.sympathetic_drive - 0.15)
+            self._hpa_diag = self.hpa.step(stress_drive, AUTONOMIC_TICK)
+
+    # ------------------------------------------------------------------
     # Monitoring — LTP decay + UI updates
     # ------------------------------------------------------------------
 
@@ -171,5 +215,9 @@ class NervousSystem:
                     f"{s.pre.name}→{s.post.name}": round(s.weight, 3)
                     for s in self.synapses
                 },
+                # Emergent autonomic + HPA diagnostics (HRV is a queryable index
+                # of vagal tone; LF/HF ≈ 1.5–2.0 at rest — Draghici & Taylor 2018).
+                "autonomic": self.autonomic.diagnostics(),
+                "hpa":       self._hpa_diag,
             }
             self.bus.update_ui("nervous_system", state)

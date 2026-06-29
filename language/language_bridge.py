@@ -95,7 +95,7 @@ class RapbotBridge:
             Path of the saved .txt file inside language/memory/.
         """
         filename = f"rapbot_{label}.txt"
-        dest = self.lm.save_text(verse, filename)
+        dest, _doc_id = self.lm.save_text(verse, filename)
         print(f"[bridge] verse saved → {dest}")
         return dest
 

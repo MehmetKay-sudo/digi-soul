@@ -17,8 +17,16 @@ Signals received (from brain or other organs):
     { "signal": "language", "cmd": "save",   "text": "<text>", "filename": "<name.txt>" }
     { "signal": "language", "cmd": "query",  "keyword": "<word>" }
     { "signal": "language", "cmd": "recall", "doc_id": "<id>" }
-    { "signal": "language", "cmd": "speak",  "prompt": "<text>", "style": "<style>" }
-    { "signal": "language", "cmd": "parse",  "text": "<text>" }   ← NEW
+    { "signal": "language", "cmd": "speak",   "prompt": "<text>", "style": "<style>" }
+    { "signal": "language", "cmd": "parse",   "text": "<text>" }
+    { "signal": "language", "cmd": "perceive", "path": "<doc.pdf|doc.txt>" }   ← NEW
+
+Document perception (Layer 2 — sensory channel):
+    The "perceive" command lets the digital body "read" an external document
+    (PDF or .txt) as a perception event. The text is extracted via
+    document_reader, persisted into language memory, and indexed (vocabulary +
+    Universal Grammar) exactly like any other loaded text — so a perceived
+    document is fully recallable and feeds future speak() calls.
 
 Signals emitted → brain:
     { "signal": "language_result", "cmd": "...", "result": ... }
@@ -37,6 +45,7 @@ from pathlib import Path
 import anthropic
 
 from core.organ import Organ
+from language.document_reader import read_document
 from language.universal_grammar import UniversalGrammar
 
 STORAGE_DIR  = Path(__file__).parent / "memory"
@@ -87,13 +96,41 @@ class LanguageModule(Organ):
         doc_id = self._index(text, source_path=path)
         return doc_id
 
-    def save_text(self, text: str, filename: str) -> Path:
+    def perceive_document(self, path: str | Path) -> dict:
+        """
+        Perceive an external document (PDF or .txt) as a sensory input.
+
+        Reads the document into plain text via the document_reader channel,
+        persists the extracted text into language memory, and indexes it
+        (vocabulary + Universal Grammar) so it is recallable and shapes future
+        speech. Returns perception metadata including the new doc_id.
+
+        Raises (surfaced cleanly to the brain by _handle's error wrapper):
+            FileNotFoundError, UnsupportedDocumentError, EmptyDocumentError,
+            DocumentReadError.
+        """
+        src          = Path(path)
+        text         = read_document(src)                 # typed errors on failure
+        dest, doc_id = self.save_text(text, f"perceived_{src.stem}.txt")
+        return {
+            "doc_id": doc_id,
+            "source": str(src),
+            "stored": str(dest),
+            "chars":  len(text),
+        }
+
+    def save_text(self, text: str, filename: str) -> tuple[Path, str]:
+        """Persist `text` to memory and index it.
+
+        Returns a (dest_path, doc_id) tuple so callers get the storage location
+        and the new corpus doc_id explicitly — no need to read state afterwards.
+        """
         if not filename.endswith(".txt"):
             filename += ".txt"
         dest = self.storage_dir / filename
         dest.write_text(text, encoding="utf-8")
-        self._index(text, source_path=dest)
-        return dest
+        doc_id = self._index(text, source_path=dest)
+        return dest, doc_id
 
     def query(self, keyword: str) -> list[dict]:
         kw = keyword.lower().strip()
@@ -174,11 +211,18 @@ class LanguageModule(Organ):
                 self.state["last_action"] = f"loaded {msg['path']}"
                 return {"ok": True, "doc_id": doc_id}
 
+            elif cmd == "perceive":
+                info = self.perceive_document(msg["path"])
+                self.state["last_action"] = (
+                    f"perceived {Path(msg['path']).name} ({info['chars']} chars)"
+                )
+                return {"ok": True, **info}
+
             elif cmd == "save":
-                filename = msg.get("filename") or self._auto_filename()
-                dest     = self.save_text(msg["text"], filename)
+                filename    = msg.get("filename") or self._auto_filename()
+                dest, doc_id = self.save_text(msg["text"], filename)
                 self.state["last_action"] = f"saved {dest.name}"
-                return {"ok": True, "path": str(dest)}
+                return {"ok": True, "path": str(dest), "doc_id": doc_id}
 
             elif cmd == "query":
                 hits = self.query(msg["keyword"])
